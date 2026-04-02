@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --color-meta-blue: #0064e0;
+  --color-meta-blue-hover: #0056c2;
+  --color-meta-dark: #1c2b33;
+  --color-meta-gray: #65676b;
+  --color-meta-light: #f5f6f7;
+}
+
+@variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
+body {
+  font-family: 'Inter', sans-serif;
+  @apply bg-white text-meta-dark dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200 min-h-screen;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  h1 {
+    @apply text-2xl md:text-3xl lg:text-4xl font-bold;
+  }
+  h2 {
+    @apply text-xl md:text-2xl lg:text-3xl font-bold;
+  }
+  h3 {
+    @apply text-lg md:text-xl lg:text-2xl font-bold;
+  }
+  .dark .ql-toolbar {
+    @apply bg-gray-800 border-gray-700;
+  }
+  .dark .ql-container {
+    @apply border-gray-700 bg-gray-900;
+  }
+  .dark .ql-editor {
+    @apply text-white;
+  }
+  .dark .ql-stroke {
+    @apply stroke-gray-400;
+  }
+  .dark .ql-fill {
+    @apply fill-gray-400;
+  }
+  .dark .ql-picker {
+    @apply text-gray-400;
+  }
+  .dark .ql-picker-options {
+    @apply bg-gray-800 border-gray-700;
+  }
+}
+
+@layer utilities {
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .container-padding {
+    @apply px-4 sm:px-6 lg:px-8;
+  }
+  .mobile-text-sm {
+    @apply text-sm md:text-base;
+  }
+  .mobile-text-xs {
+    @apply text-xs md:text-sm;
+  }
+}
