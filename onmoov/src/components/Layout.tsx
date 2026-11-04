@@ -1,6 +1,6 @@
 import { ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Menu, ChevronRight, Globe, User, LogOut, Award, Moon, Sun } from 'lucide-react';
+import { Menu, ChevronRight, Globe, User, LogOut, Award, Moon, Sun, AppWindow, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../lib/ThemeContext';
 import { supabase } from '../lib/supabase';
@@ -29,6 +29,19 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Smooth scroll to hash anchor (e.g. #applications) on navigation
+  useEffect(() => {
+    if (location.hash) {
+      const id = location.hash.replace('#', '');
+      const element = document.getElementById(id);
+      if (element) {
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth' });
+        }, 150);
+      }
+    }
+  }, [location.pathname, location.hash]);
 
   async function fetchSiteSettings() {
     try {
@@ -137,37 +150,80 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       {/* Mobile Top Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 md:hidden h-16 px-4 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2">
-          <img src="/logo.svg" alt="onmoov.engineering logo" className="h-8 w-auto object-contain rounded-lg" />
-          <span className="font-bold text-lg tracking-tight text-meta-dark dark:text-white">
+        <Link to="/" className="flex items-center gap-2 min-w-0">
+          <img src="/logo.svg" alt="onmoov.engineering logo" className="h-8 w-auto object-contain rounded-lg shrink-0" />
+          <span className="font-bold text-base sm:text-lg tracking-tight text-meta-dark dark:text-white truncate">
             onmoov<span className="text-meta-blue">.engineering</span>
           </span>
         </Link>
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-meta-dark dark:text-white p-2">
-          <Menu className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Link
+            to="/#applications"
+            onClick={() => {
+              if (location.pathname === '/') {
+                const el = document.getElementById('applications');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }
+            }}
+            className="px-3 py-1.5 bg-meta-blue text-white text-xs font-semibold rounded-xl hover:bg-meta-blue-hover transition-colors flex items-center gap-1.5 shadow-xs"
+          >
+            <AppWindow className="w-3.5 h-3.5" />
+            <span>{t('nav.apps')}</span>
+          </Link>
+          <button 
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} 
+            className="text-meta-dark dark:text-white p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            aria-label="Menu"
+          >
+            {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
       </nav>
 
       {/* Mobile Menu Overlay */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-[60] md:hidden">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
-          <div className="absolute left-0 top-0 bottom-0 w-64 bg-white dark:bg-gray-900 p-6 flex flex-col">
-            <Link to="/" onClick={() => setIsMobileMenuOpen(false)} className="flex items-center gap-2 mb-10">
-              <img src="/logo.svg" alt="onmoov.engineering logo" className="h-8 w-auto object-contain rounded-lg" />
-              <span className="font-bold text-lg tracking-tight text-meta-dark dark:text-white">
-                onmoov<span className="text-meta-blue">.engineering</span>
-              </span>
-            </Link>
+          <div className="absolute left-0 top-0 bottom-0 w-72 max-w-[85vw] bg-white dark:bg-gray-900 p-6 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between mb-8">
+              <Link to="/" onClick={() => setIsMobileMenuOpen(false)} className="flex items-center gap-2">
+                <img src="/logo.svg" alt="onmoov.engineering logo" className="h-7 w-auto object-contain rounded-lg" />
+                <span className="font-bold text-base tracking-tight text-meta-dark dark:text-white">
+                  onmoov<span className="text-meta-blue">.engineering</span>
+                </span>
+              </Link>
+              <button 
+                onClick={() => setIsMobileMenuOpen(false)} 
+                className="text-gray-400 hover:text-gray-700 dark:hover:text-white p-1 rounded-lg"
+                aria-label="Fermer le menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             
-            <div className="flex flex-col space-y-2 flex-grow">
-              <Link to="/solutions" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">{t('nav.solutions')}</Link>
-              <Link to="/innovation" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">{t('nav.innovation')}</Link>
-              <Link to="/formations" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">{t('nav.training')}</Link>
-              <Link to="/carrieres" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Carrières</Link>
-              <Link to="/forum" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Forum</Link>
-              <Link to="/about" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">{t('nav.about')}</Link>
-              <Link to="/contact" onClick={() => setIsMobileMenuOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">{t('nav.contact')}</Link>
+            <div className="flex flex-col space-y-1.5 flex-grow overflow-y-auto pr-1">
+              <Link to="/solutions" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/solutions') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>{t('nav.solutions')}</Link>
+              <Link to="/innovation" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/innovation') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>{t('nav.innovation')}</Link>
+              <Link to="/formations" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/formations') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>{t('nav.training')}</Link>
+              <Link to="/carrieres" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/carrieres') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>Carrières</Link>
+              <Link to="/forum" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/forum') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>Forum</Link>
+              <Link to="/about" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/about') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>{t('nav.about')}</Link>
+              <Link to="/contact" onClick={() => setIsMobileMenuOpen(false)} className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive('/contact') ? 'bg-meta-blue text-white font-semibold' : 'text-meta-gray dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}>{t('nav.contact')}</Link>
+              
+              <Link 
+                to="/#applications" 
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  if (location.pathname === '/') {
+                    const el = document.getElementById('applications');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }
+                }} 
+                className="mt-3 px-4 py-2.5 bg-meta-blue text-white text-sm font-semibold rounded-xl hover:bg-meta-blue-hover transition-colors text-center shadow-xs flex items-center justify-center gap-2"
+              >
+                <AppWindow className="w-4 h-4" />
+                {t('nav.apps')}
+              </Link>
             </div>
 
             <div className="mt-auto pt-6 border-t border-gray-100 dark:border-gray-800 space-y-4">
@@ -175,17 +231,26 @@ export default function Layout({ children }: { children: ReactNode }) {
                 <button onClick={toggleDarkMode} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                   {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </button>
-                <button className="flex items-center gap-1 p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                  <Globe className="w-4 h-4" />
-                  <span className="text-sm font-medium uppercase">{i18n.language.split('-')[0]}</span>
-                </button>
+                <div className="relative group">
+                  <button className="flex items-center gap-1 p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                    <Globe className="w-4 h-4" />
+                    <span className="text-sm font-medium uppercase">{i18n.language.split('-')[0]}</span>
+                  </button>
+                  <div className="absolute bottom-full right-0 mb-2 w-32 bg-white dark:bg-gray-800 rounded-xl shadow-lg py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 border border-gray-100 dark:border-gray-700">
+                    <button onClick={() => changeLanguage('fr')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Français</button>
+                    <button onClick={() => changeLanguage('en')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">English</button>
+                    <button onClick={() => changeLanguage('pt')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Português</button>
+                    <button onClick={() => changeLanguage('es')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Español</button>
+                    <button onClick={() => changeLanguage('ja')} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">日本語</button>
+                  </div>
+                </div>
               </div>
               {user ? (
-                <button onClick={handleLogout} className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50">
+                <button onClick={handleLogout} className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl">
                   <LogOut className="w-4 h-4" /> Déconnexion
                 </button>
               ) : (
-                <button onClick={() => { setIsMobileMenuOpen(false); setIsAuthModalOpen(true); }} className="w-full py-2 px-4 bg-meta-blue text-white text-sm font-medium rounded-xl">
+                <button onClick={() => { setIsMobileMenuOpen(false); setIsAuthModalOpen(true); }} className="w-full py-2.5 px-4 bg-meta-blue text-white text-sm font-medium rounded-xl">
                   Connexion
                 </button>
               )}
