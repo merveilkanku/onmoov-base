@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
-import { Loader2, LogOut, Plus, Trash2, ArrowLeft, Users, ShieldAlert, Settings, Save, GraduationCap, LayoutDashboard, AppWindow, Database, UserCog, Upload, UserPlus, Search, FileText, CheckCircle2, BarChart3, Sun, Moon, Briefcase, MapPin, Clock, XCircle } from 'lucide-react';
+import { Loader2, LogOut, Plus, Trash2, ArrowLeft, Users, ShieldAlert, Settings, Save, GraduationCap, LayoutDashboard, AppWindow, Database, UserCog, Upload, UserPlus, Search, FileText, CheckCircle2, BarChart3, Sun, Moon, Briefcase, MapPin, Clock, XCircle, Download, Link2, Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -61,8 +61,13 @@ export default function Admin() {
   const [appStatus, setAppStatus] = useState<'draft' | 'published'>('published');
   const [appImageFile, setAppImageFile] = useState<File | null>(null);
   const [appFile, setAppFile] = useState<File | null>(null);
+  const [appImageUrl, setAppImageUrl] = useState('');
+  const [appDownloadUrl, setAppDownloadUrl] = useState('');
+  const [appImageSourceType, setAppImageSourceType] = useState<'upload' | 'url'>('upload');
+  const [appFileSourceType, setAppFileSourceType] = useState<'upload' | 'url'>('upload');
   const [appFormKey, setAppFormKey] = useState(0);
   const [editingAppId, setEditingAppId] = useState<string | null>(null);
+  const [sqlCopied, setSqlCopied] = useState(false);
 
   // New User Form state
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -481,7 +486,14 @@ export default function Admin() {
         .order('created_at', { ascending: false });
       
       if (error) throw error;
-      if (data) setApplications(data);
+      if (data) {
+        const mappedData = data.map((app: any) => ({
+          ...app,
+          download_url: app.download_url || app.file_url || '',
+          downloads_count: Number(app.downloads_count) || 0
+        }));
+        setApplications(mappedData);
+      }
     } catch (error) {
       console.error('Error fetching applications:', error);
     }
@@ -494,25 +506,31 @@ export default function Admin() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!editingAppId && (!appImageFile || !appFile)) {
-      toast.error("Veuillez sélectionner une image et un fichier pour l'application.");
+    
+    const hasImage = appImageSourceType === 'upload' ? !!appImageFile : !!appImageUrl.trim();
+    const hasFile = appFileSourceType === 'upload' ? !!appFile : !!appDownloadUrl.trim();
+
+    if (!editingAppId && (!hasImage || !hasFile)) {
+      toast.error("Veuillez fournir une image et un fichier ou lien de téléchargement pour l'application.");
       return;
     }
     
     setIsSubmitting(true);
 
     try {
-      let finalImageUrl = undefined;
-      let finalAppUrl = undefined;
+      let finalImageUrl: string | undefined = appImageSourceType === 'url' ? appImageUrl.trim() : undefined;
+      let finalAppUrl: string | undefined = appFileSourceType === 'url' ? appDownloadUrl.trim() : undefined;
 
       // Upload Image if provided
-      if (appImageFile) {
-        const imageExt = appImageFile.name.split('.').pop();
+      if (appImageSourceType === 'upload' && appImageFile) {
+        const imageExt = appImageFile.name.split('.').pop() || 'png';
         const imageName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${imageExt}`;
         const { error: imageError } = await supabase.storage
           .from('app-images')
-          .upload(imageName, appImageFile);
-        if (imageError) throw imageError;
+          .upload(imageName, appImageFile, { upsert: true });
+        if (imageError) {
+          throw new Error(`Téléversement image échoué: ${imageError.message}. Vérifiez le bucket 'app-images' ou saisissez une URL directe.`);
+        }
 
         const { data } = supabase.storage
           .from('app-images')
@@ -521,13 +539,15 @@ export default function Admin() {
       }
 
       // Upload App File if provided
-      if (appFile) {
-        const appExt = appFile.name.split('.').pop();
+      if (appFileSourceType === 'upload' && appFile) {
+        const appExt = appFile.name.split('.').pop() || 'zip';
         const appName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${appExt}`;
         const { error: appError } = await supabase.storage
           .from('app-files')
-          .upload(appName, appFile);
-        if (appError) throw appError;
+          .upload(appName, appFile, { upsert: true });
+        if (appError) {
+          throw new Error(`Téléversement fichier échoué: ${appError.message}. Vérifiez le bucket 'app-files' ou utilisez un lien de téléchargement direct (Google Drive, MEGA, Store...).`);
+        }
 
         const { data } = supabase.storage
           .from('app-files')
@@ -543,15 +563,57 @@ export default function Admin() {
       };
 
       if (finalImageUrl) appData.image_url = finalImageUrl;
-      if (finalAppUrl) appData.download_url = finalAppUrl;
+      if (finalAppUrl) {
+        appData.download_url = finalAppUrl;
+        appData.file_url = finalAppUrl;
+      }
 
       if (editingAppId) {
-        const { error } = await supabase.from('applications').update(appData).eq('id', editingAppId);
+        let { error } = await supabase.from('applications').update(appData).eq('id', editingAppId);
+        
+        // Fallback retry if column file_url doesn't exist
+        if (error && error.message?.includes('file_url')) {
+          const fallbackData = { ...appData };
+          delete fallbackData.file_url;
+          const retry = await supabase.from('applications').update(fallbackData).eq('id', editingAppId);
+          error = retry.error;
+        }
+        // Fallback retry if column download_url doesn't exist
+        if (error && error.message?.includes('download_url')) {
+          const fallbackData = { ...appData };
+          delete fallbackData.download_url;
+          const retry = await supabase.from('applications').update(fallbackData).eq('id', editingAppId);
+          error = retry.error;
+        }
+
         if (error) throw error;
         toast.success('Application mise à jour avec succès !');
       } else {
         appData.downloads_count = 0;
-        const { error } = await supabase.from('applications').insert([appData]);
+        let { error } = await supabase.from('applications').insert([appData]);
+
+        // Fallback retry if column downloads_count doesn't exist in DB
+        if (error && error.message?.includes('downloads_count')) {
+          const fallbackData = { ...appData };
+          delete fallbackData.downloads_count;
+          const retry = await supabase.from('applications').insert([fallbackData]);
+          error = retry.error;
+        }
+        // Fallback retry if column file_url doesn't exist
+        if (error && error.message?.includes('file_url')) {
+          const fallbackData = { ...appData };
+          delete fallbackData.file_url;
+          const retry = await supabase.from('applications').insert([fallbackData]);
+          error = retry.error;
+        }
+        // Fallback retry if column download_url doesn't exist
+        if (error && error.message?.includes('download_url')) {
+          const fallbackData = { ...appData };
+          delete fallbackData.download_url;
+          const retry = await supabase.from('applications').insert([fallbackData]);
+          error = retry.error;
+        }
+
         if (error) throw error;
         toast.success('Application ajoutée avec succès !');
       }
@@ -562,13 +624,17 @@ export default function Admin() {
       setAppStatus('published');
       setAppImageFile(null);
       setAppFile(null);
+      setAppImageUrl('');
+      setAppDownloadUrl('');
+      setAppImageSourceType('upload');
+      setAppFileSourceType('upload');
       setEditingAppId(null);
       setAppFormKey(prev => prev + 1);
       
       fetchApplications();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving application:', error);
-      toast.error('Erreur lors de l\'enregistrement de l\'application.');
+      toast.error(error?.message ? `Erreur: ${error.message}` : "Erreur lors de l'enregistrement de l'application.");
     } finally {
       setIsSubmitting(false);
     }
@@ -601,6 +667,10 @@ export default function Admin() {
     setDescription(app.description);
     setTag(app.tag);
     setAppStatus(app.status !== 'draft' ? 'published' : 'draft');
+    setAppImageUrl(app.image_url || '');
+    setAppDownloadUrl(app.download_url || (app as any).file_url || '');
+    setAppImageSourceType(app.image_url ? 'url' : 'upload');
+    setAppFileSourceType((app.download_url || (app as any).file_url) ? 'url' : 'upload');
     setAppImageFile(null);
     setAppFile(null);
     setAppFormKey(prev => prev + 1);
@@ -828,46 +898,46 @@ export default function Admin() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
-        <div className="mb-8 flex space-x-1 border-b border-gray-200 dark:border-gray-700 overflow-x-auto pb-1 hide-scrollbar sticky top-16 bg-gray-50 dark:bg-gray-900 z-40">
+        <div className="mb-8 flex space-x-1.5 border-b border-gray-200 dark:border-gray-700 overflow-x-auto pb-2 hide-scrollbar sticky top-16 bg-gray-50 dark:bg-gray-900 z-40 -mx-4 px-4 sm:mx-0 sm:px-0">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
               activeTab === 'dashboard'
                 ? 'bg-meta-blue text-white shadow-md'
                 : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
             }`}
           >
-            <LayoutDashboard className="w-4 h-4" /> <span className="hidden xs:inline">Tableau de bord</span><span className="xs:hidden">Dashboard</span>
+            <LayoutDashboard className="w-4 h-4" /> <span className="hidden sm:inline">Tableau de bord</span><span className="sm:hidden">Dashboard</span>
           </button>
           <button
             onClick={() => setActiveTab('apps')}
-            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
               activeTab === 'apps'
                 ? 'bg-meta-blue text-white shadow-md'
                 : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
             }`}
           >
-            <AppWindow className="w-4 h-4" /> <span className="hidden xs:inline">Applications</span><span className="xs:hidden">Apps</span>
+            <AppWindow className="w-4 h-4" /> <span className="hidden sm:inline">Applications</span><span className="sm:hidden">Apps</span>
           </button>
           <button
             onClick={() => setActiveTab('courses')}
-            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
               activeTab === 'courses'
                 ? 'bg-meta-blue text-white shadow-md'
                 : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
             }`}
           >
-            <GraduationCap className="w-4 h-4" /> <span className="hidden xs:inline">Formations</span><span className="xs:hidden">Cours</span>
+            <GraduationCap className="w-4 h-4" /> <span className="hidden sm:inline">Formations</span><span className="sm:hidden">Cours</span>
           </button>
           <button
             onClick={() => setActiveTab('analytics')}
-            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
               activeTab === 'analytics'
                 ? 'bg-meta-blue text-white shadow-md'
                 : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
             }`}
           >
-            <BarChart3 className="w-4 h-4" /> <span className="hidden xs:inline">Statistiques</span><span className="xs:hidden">Stats</span>
+            <BarChart3 className="w-4 h-4" /> <span className="hidden sm:inline">Statistiques</span><span className="sm:hidden">Stats</span>
           </button>
           
           {isAdmin && (
@@ -875,55 +945,55 @@ export default function Admin() {
               {isSuperAdmin && (
                 <button
                   onClick={() => setActiveTab('users')}
-                  className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+                  className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
                     activeTab === 'users'
                       ? 'bg-meta-blue text-white shadow-md'
                       : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <UserCog className="w-4 h-4" /> <span className="hidden xs:inline">Utilisateurs</span><span className="xs:hidden">Users</span>
+                  <UserCog className="w-4 h-4" /> <span className="hidden sm:inline">Utilisateurs</span><span className="sm:hidden">Users</span>
                 </button>
               )}
               <button
                 onClick={() => setActiveTab('trainer_apps')}
-                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
                   activeTab === 'trainer_apps'
                     ? 'bg-meta-blue text-white shadow-md'
                     : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
               >
-                <FileText className="w-4 h-4" /> <span className="hidden xs:inline">Formateurs</span><span className="xs:hidden">Formateurs</span>
+                <FileText className="w-4 h-4" /> <span className="hidden sm:inline">Formateurs</span><span className="sm:hidden">Formateurs</span>
               </button>
               <button
                 onClick={() => setActiveTab('recruitment')}
-                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
                   activeTab === 'recruitment'
                     ? 'bg-meta-blue text-white shadow-md'
                     : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
               >
-                <Briefcase className="w-4 h-4" /> <span className="hidden xs:inline">Recrutement</span><span className="xs:hidden">Jobs</span>
+                <Briefcase className="w-4 h-4" /> <span className="hidden sm:inline">Recrutement</span><span className="sm:hidden">Jobs</span>
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
-                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+                className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
                   activeTab === 'settings'
                     ? 'bg-meta-blue text-white shadow-md'
                     : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
               >
-                <Settings className="w-4 h-4" /> <span className="hidden xs:inline">Paramètres</span><span className="xs:hidden">Config</span>
+                <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Paramètres</span><span className="sm:hidden">Config</span>
               </button>
               {isSuperAdmin && (
                 <button
                   onClick={() => setActiveTab('setup')}
-                  className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-2 whitespace-nowrap ${
+                  className={`px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm font-semibold rounded-t-xl transition-all flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 ${
                     activeTab === 'setup'
                       ? 'bg-meta-blue text-white shadow-md'
                       : 'text-gray-500 dark:text-gray-400 hover:text-meta-dark dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <Database className="w-4 h-4" /> <span className="hidden xs:inline">SQL</span><span className="xs:hidden">SQL</span>
+                  <Database className="w-4 h-4" /> <span className="hidden sm:inline">SQL</span><span className="sm:hidden">SQL</span>
                 </button>
               )}
             </>
@@ -939,7 +1009,7 @@ export default function Admin() {
         )}
 
         {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
             <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
               <div className="p-4 bg-blue-50 dark:bg-blue-900/30 text-meta-blue dark:text-blue-400 rounded-xl">
                 <AppWindow className="w-8 h-8" />
@@ -949,7 +1019,20 @@ export default function Admin() {
                 <p className="text-3xl font-bold text-meta-dark dark:text-white">{applications.length}</p>
               </div>
             </div>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
+
+            <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                <Download className="w-8 h-8" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Téléchargements</p>
+                <p className="text-3xl font-bold text-meta-dark dark:text-white">
+                  {applications.reduce((acc, a) => acc + (a.downloads_count || 0), 0)}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
               <div className="p-4 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl">
                 <GraduationCap className="w-8 h-8" />
               </div>
@@ -958,8 +1041,9 @@ export default function Admin() {
                 <p className="text-3xl font-bold text-meta-dark dark:text-white">{courses.length}</p>
               </div>
             </div>
+
             {isAdmin && (
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
+              <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5 hover:shadow-md transition-shadow">
                 <div className="p-4 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl">
                   <Users className="w-8 h-8" />
                 </div>
@@ -1189,17 +1273,35 @@ export default function Admin() {
 
         {activeTab === 'setup' && isAdmin && (
           <div className="bg-white dark:bg-gray-800 p-4 sm:p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h2 className="text-xl font-bold text-meta-dark dark:text-white mb-4 flex items-center gap-3">
-              <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-meta-blue dark:text-blue-400">
-                <Database className="w-6 h-6" />
-              </div>
-              Script d'installation complet (Supabase)
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+              <h2 className="text-xl font-bold text-meta-dark dark:text-white flex items-center gap-3">
+                <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-meta-blue dark:text-blue-400">
+                  <Database className="w-6 h-6" />
+                </div>
+                Script d'installation complet (Supabase)
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const pre = document.getElementById('supabase-sql-script');
+                  if (pre) {
+                    navigator.clipboard.writeText(pre.innerText);
+                    setSqlCopied(true);
+                    toast.success('Script SQL copié dans le presse-papier !');
+                    setTimeout(() => setSqlCopied(false), 3000);
+                  }
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-meta-blue hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-all shadow-sm self-start sm:self-auto cursor-pointer"
+              >
+                {sqlCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {sqlCopied ? 'Script copié !' : 'Copier tout le script SQL'}
+              </button>
+            </div>
             <p className="text-base text-meta-gray dark:text-gray-400 mb-6">
-              Copiez et exécutez ce script dans le <strong>SQL Editor</strong> de Supabase pour créer toutes les tables, politiques de sécurité (RLS) et fonctions nécessaires.
+              Copiez et exécutez ce script dans le <strong>SQL Editor</strong> de Supabase pour créer ou mettre à jour toutes les tables, politiques de sécurité (RLS) et la fonction de comptage des téléchargements.
             </p>
             <div className="bg-[#1e1e1e] dark:bg-gray-900 rounded-xl p-6 overflow-x-auto shadow-inner border border-gray-800 dark:border-gray-700">
-              <pre className="text-gray-300 dark:text-gray-400 text-sm font-mono whitespace-pre-wrap leading-relaxed">
+              <pre id="supabase-sql-script" className="text-gray-300 dark:text-gray-400 text-sm font-mono whitespace-pre-wrap leading-relaxed">
 {`-- ==========================================
 -- SCRIPT SQL ONMOOV (SUPERADMIN & FORMATIONS)
 -- ==========================================
@@ -1338,11 +1440,38 @@ CREATE TABLE IF NOT EXISTS public.applications (
   name text NOT NULL,
   description text NOT NULL,
   image_url text NOT NULL,
-  file_url text NOT NULL,
+  download_url text,
+  file_url text,
+  downloads_count integer DEFAULT 0,
   tag text NOT NULL DEFAULT 'Application',
   status text NOT NULL DEFAULT 'published',
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Assurer que toutes les colonnes existent même si la table a été créée précédemment
+DO $$ 
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'applications' AND column_name = 'downloads_count') THEN
+    ALTER TABLE public.applications ADD COLUMN downloads_count integer DEFAULT 0;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'applications' AND column_name = 'download_url') THEN
+    ALTER TABLE public.applications ADD COLUMN download_url text;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'applications' AND column_name = 'file_url') THEN
+    ALTER TABLE public.applications ADD COLUMN file_url text;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'applications' AND column_name = 'file_url') THEN
+    ALTER TABLE public.applications ALTER COLUMN file_url DROP NOT NULL;
+  END IF;
+
+  -- Synchroniser les colonnes si une seule est renseignée
+  UPDATE public.applications SET download_url = file_url WHERE download_url IS NULL AND file_url IS NOT NULL;
+  UPDATE public.applications SET file_url = download_url WHERE file_url IS NULL AND download_url IS NOT NULL;
+  UPDATE public.applications SET downloads_count = 0 WHERE downloads_count IS NULL;
+END $$;
 
 ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
 
@@ -1355,6 +1484,23 @@ BEGIN
     CREATE POLICY "Gestion admin des apps" ON applications FOR ALL USING (public.is_admin());
   END IF;
 END $$;
+
+-- FONCTION RPC POUR INCRÉMENTER LE NOMBRE DE TÉLÉCHARGEMENTS (ACCESSIBLE À TOUS LES VISITEURS)
+CREATE OR REPLACE FUNCTION public.increment_download_count(app_id uuid)
+RETURNS integer AS $$
+DECLARE
+  new_count integer;
+BEGIN
+  UPDATE public.applications
+  SET downloads_count = COALESCE(downloads_count, 0) + 1
+  WHERE id = app_id
+  RETURNING downloads_count INTO new_count;
+  
+  RETURN COALESCE(new_count, 0);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.increment_download_count(uuid) TO anon, authenticated, service_role;
 
 -- 5. CANDIDATURES FORMATEURS
 CREATE TABLE IF NOT EXISTS public.trainer_applications (
@@ -2005,49 +2151,133 @@ END $$;
                       <option value="draft">Brouillon</option>
                     </select>
                   </div>
+                  {/* Mode de sélection pour l'image */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Image de l'application {editingAppId && '(optionnel)'}</label>
-                    <div 
-                      {...getAppImageProps()} 
-                      className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${isAppImageDragActive ? 'border-meta-blue bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-meta-blue/50 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-                    >
-                      <input {...getAppImageInputProps()} />
-                      {appImageFile ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <CheckCircle2 className="w-8 h-8 text-green-500" />
-                          <p className="text-sm text-gray-900 dark:text-white font-medium">{appImageFile.name}</p>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-2">
-                          <Upload className="w-8 h-8 text-gray-400" />
-                          <p className="text-sm text-gray-500 dark:text-gray-400">
-                            {editingAppId ? 'Nouvelle image pour remplacer' : 'Glissez-déposez ou cliquez'}
-                          </p>
-                        </div>
-                      )}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Image de l'application {editingAppId && '(optionnel)'}
+                      </label>
+                      <div className="flex bg-gray-100 dark:bg-gray-700/60 p-0.5 rounded-lg text-xs font-medium">
+                        <button
+                          type="button"
+                          onClick={() => setAppImageSourceType('upload')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${appImageSourceType === 'upload' ? 'bg-white dark:bg-gray-800 text-meta-blue shadow-xs font-semibold' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Fichier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAppImageSourceType('url')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${appImageSourceType === 'url' ? 'bg-white dark:bg-gray-800 text-meta-blue shadow-xs font-semibold' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Lien URL
+                        </button>
+                      </div>
                     </div>
+
+                    {appImageSourceType === 'upload' ? (
+                      <div 
+                        {...getAppImageProps()} 
+                        className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${isAppImageDragActive ? 'border-meta-blue bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-meta-blue/50 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+                      >
+                        <input {...getAppImageInputProps()} />
+                        {appImageFile ? (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <CheckCircle2 className="w-7 h-7 text-green-500" />
+                            <p className="text-xs text-gray-900 dark:text-white font-medium truncate max-w-full">{appImageFile.name}</p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <Upload className="w-7 h-7 text-gray-400" />
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {editingAppId ? 'Nouvelle image pour remplacer' : 'Glissez-déposez ou cliquez'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <Link2 className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="url"
+                            value={appImageUrl}
+                            onChange={(e) => setAppImageUrl(e.target.value)}
+                            placeholder="https://images.unsplash.com/... ou URL d'image"
+                            className="w-full pl-9 pr-3 py-2.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 dark:text-white focus:outline-none focus:border-meta-blue focus:ring-2 focus:ring-meta-blue/20"
+                          />
+                        </div>
+                        {appImageUrl && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700">
+                            <img src={appImageUrl} alt="Aperçu" className="w-10 h-10 rounded-md object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate">Aperçu de l'image</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
+
+                  {/* Mode de sélection pour le fichier */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Fichier (.exe, .zip) {editingAppId && '(optionnel)'}</label>
-                    <div 
-                      {...getAppFileProps()} 
-                      className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${isAppFileDragActive ? 'border-meta-blue bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-meta-blue/50 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-                    >
-                      <input {...getAppFileInputProps()} />
-                      {appFile ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <CheckCircle2 className="w-8 h-8 text-green-500" />
-                          <p className="text-sm text-gray-900 dark:text-white font-medium">{appFile.name}</p>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-2">
-                          <FileText className="w-8 h-8 text-gray-400" />
-                          <p className="text-sm text-gray-500 dark:text-gray-400">
-                            {editingAppId ? 'Nouveau fichier pour remplacer' : 'Glissez-déposez ou cliquez'}
-                          </p>
-                        </div>
-                      )}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Fichier ou Lien {editingAppId && '(optionnel)'}
+                      </label>
+                      <div className="flex bg-gray-100 dark:bg-gray-700/60 p-0.5 rounded-lg text-xs font-medium">
+                        <button
+                          type="button"
+                          onClick={() => setAppFileSourceType('upload')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${appFileSourceType === 'upload' ? 'bg-white dark:bg-gray-800 text-meta-blue shadow-xs font-semibold' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Fichier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAppFileSourceType('url')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${appFileSourceType === 'url' ? 'bg-white dark:bg-gray-800 text-meta-blue shadow-xs font-semibold' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Lien direct / Cloud
+                        </button>
+                      </div>
                     </div>
+
+                    {appFileSourceType === 'upload' ? (
+                      <div 
+                        {...getAppFileProps()} 
+                        className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${isAppFileDragActive ? 'border-meta-blue bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-meta-blue/50 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+                      >
+                        <input {...getAppFileInputProps()} />
+                        {appFile ? (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <CheckCircle2 className="w-7 h-7 text-green-500" />
+                            <p className="text-xs text-gray-900 dark:text-white font-medium truncate max-w-full">{appFile.name}</p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <FileText className="w-7 h-7 text-gray-400" />
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {editingAppId ? 'Nouveau fichier pour remplacer' : 'Glissez-déposez (.apk, .exe, .zip)'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="relative">
+                          <Link2 className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="url"
+                            value={appDownloadUrl}
+                            onChange={(e) => setAppDownloadUrl(e.target.value)}
+                            placeholder="ex: Google Drive, Mega, Play Store, GitHub, APK direct..."
+                            className="w-full pl-9 pr-3 py-2.5 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 dark:text-white focus:outline-none focus:border-meta-blue focus:ring-2 focus:ring-meta-blue/20"
+                          />
+                        </div>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 pl-1">
+                          Idéal pour les applications volumineuses (&gt; 50 Mo) ou hébergées sur le cloud.
+                        </p>
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-3 pt-2">
                     {editingAppId && (
@@ -2061,6 +2291,10 @@ END $$;
                           setAppStatus('published');
                           setAppImageFile(null);
                           setAppFile(null);
+                          setAppImageUrl('');
+                          setAppDownloadUrl('');
+                          setAppImageSourceType('upload');
+                          setAppFileSourceType('upload');
                           setAppFormKey(prev => prev + 1);
                         }}
                         className="flex-1 flex justify-center items-center gap-2 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 py-2.5 px-4 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-200 transition-all"
@@ -2127,8 +2361,8 @@ END $$;
                               <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600"></div>
                               {new Date(app.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
                             </span>
-                            <span className="flex items-center gap-1.5">
-                              <Upload className="w-3.5 h-3.5 text-gray-400" /> 
+                            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-meta-blue dark:text-blue-400 font-semibold text-xs">
+                              <Download className="w-3.5 h-3.5" /> 
                               {app.downloads_count || 0} téléchargements
                             </span>
                           </div>
